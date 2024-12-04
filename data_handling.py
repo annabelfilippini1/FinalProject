@@ -1,6 +1,11 @@
 import sqlite3
 import requests
 import datetime
+import os
+import pandas as pd
+
+# Ensure 'data' directory exists
+os.makedirs('data', exist_ok=True)
 
 # Setup Database
 def setup_database():
@@ -25,14 +30,13 @@ def setup_database():
         date TEXT NOT NULL
     )
     ''')
-
     connection.commit()
     connection.close()
     print("Database and tables created successfully!")
 
 # Fetch Weather Data for Michigan
 def fetch_weather_data(batch_size=25):
-    API_KEY = 'f04f027d1faa2b1f808a1d516d743698'
+    API_KEY = '0cc603418077cee513623172b9a1d8c2'
     lat = 44.31  # Michigan latitude
     lon = -85.6  # Michigan longitude
     base_url = "http://api.openweathermap.org/data/2.5/onecall/timemachine"
@@ -49,28 +53,38 @@ def fetch_weather_data(batch_size=25):
     end_date = current_date + datetime.timedelta(days=batch_size)
 
     while current_date < end_date:
-        timestamp = int(current_date.strftime('%s'))  # Convert date to UNIX timestamp
+        timestamp = int(datetime.datetime.combine(current_date, datetime.datetime.min.time()).timestamp())
         params = {
             'lat': lat,
             'lon': lon,
             'dt': timestamp,
-            'appid': API_KEY
+            'appid': API_KEY,
+            'units': 'imperial'
         }
 
         response = requests.get(base_url, params=params)
-        data = response.json()
+        if response.status_code != 200:
+            print(f"Error fetching data for {current_date}: {response.status_code} - {response.text}")
+            current_date += datetime.timedelta(days=1)
+            continue
 
-        if 'current' in data:
-            current = data['current']
-            avg_temp = current['temp']
-            temp_min = current.get('temp_min', avg_temp)
-            temp_max = current.get('temp_max', avg_temp)
-            temperature_range = f"{temp_min} - {temp_max}"
+        try:
+            data = response.json()
+            print(f"Response for {current_date}:\n{data}")
 
-            cursor.execute('''
-            INSERT INTO weather_data (date, average_temp, temperature_range)
-            VALUES (?, ?, ?)
-            ''', (current_date.isoformat(), avg_temp, temperature_range))
+            if 'current' in data:
+                current = data['current']
+                avg_temp = current['temp']
+                temperature_range = f"{avg_temp} - {avg_temp}"  # Simplified due to API limitations
+
+                cursor.execute('''
+                INSERT INTO weather_data (date, average_temp, temperature_range)
+                VALUES (?, ?, ?)
+                ''', (current_date.isoformat(), avg_temp, temperature_range))
+            else:
+                print(f"'current' data missing for {current_date}")
+        except Exception as e:
+            print(f"Error processing data for {current_date}: {e}")
 
         current_date += datetime.timedelta(days=1)
 
@@ -78,6 +92,8 @@ def fetch_weather_data(batch_size=25):
     connection.close()
     print(f"Stored {batch_size} weather data entries successfully!")
 
+
+# Fetch Google Trends Data
 def fetch_google_trends(keyword, batch_size=25):
     API_KEY = '4c668174a9439e8e26f6c233750fa3d50d8de4bd2d28fb757fb14b9eec28d111'
     base_url = "https://serpapi.com/search"
@@ -93,7 +109,6 @@ def fetch_google_trends(keyword, batch_size=25):
         return
 
     data = response.json()
-
     connection = sqlite3.connect('data/sip_and_search.sqlite')
     cursor = connection.cursor()
 
@@ -112,45 +127,9 @@ def fetch_google_trends(keyword, batch_size=25):
     connection.close()
     print(f"Stored {entries_stored} entries for Google Trends keyword '{keyword}'!")
 
-# Fetch Twitter Data
-def fetch_twitter_data(keyword):
-    BEARER_TOKEN = 'your_twitter_bearer_token'  # Replace with actual Bearer Token
-    base_url = "https://api.twitter.com/2/tweets/search/recent"
-    headers = {
-        'Authorization': f'Bearer {BEARER_TOKEN}'
-    }
-    params = {
-        'query': keyword,
-        'tweet.fields': 'created_at',
-        'max_results': 100
-    }
-
-    response = requests.get(base_url, headers=headers, params=params)
-    if response.status_code != 200:
-        print(f"Error: Unable to fetch Twitter data for {keyword}. HTTP Status Code: {response.status_code}")
-        return
-
-    data = response.json()
-
-    connection = sqlite3.connect('data/sip_and_search.sqlite')
-    cursor = connection.cursor()
-
-    if 'data' in data:
-        for tweet in data['data']:
-            cursor.execute('''
-            INSERT INTO search_trends (keyword, platform, volume, date)
-            VALUES (?, ?, ?, ?)
-            ''', (keyword, 'Twitter', 1, tweet['created_at']))
-
-    connection.commit()
-    connection.close()
-    print(f"Twitter data for '{keyword}' fetched and stored successfully!")
-
 # Main execution
 if __name__ == "__main__":
     setup_database()
     fetch_weather_data()
     fetch_google_trends('lemonade')
     fetch_google_trends('hot chocolate')
-    fetch_twitter_data('lemonade')
-    fetch_twitter_data('hot chocolate')
