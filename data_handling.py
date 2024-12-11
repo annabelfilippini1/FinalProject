@@ -4,6 +4,7 @@ import json
 import pandas as pd
 import openmeteo_requests
 import requests_cache
+import requests
 from retry_requests import retry
 
 # Define the API URL
@@ -76,3 +77,45 @@ daily_data["uv_index_max"] = daily_uv_index_max
 
 daily_dataframe = pd.DataFrame(data = daily_data)
 print(daily_dataframe)
+
+# GOOGLE TRENDS
+
+import requests
+import pandas as pd
+
+# Define the API key and endpoint
+api_key = "4c668174a9439e8e26f6c233750fa3d50d8de4bd2d28fb757fb14b9eec28d111"
+api_url = "https://serpapi.com/search.json?engine=google_trends&q=lemonade&data_type=RELATED_TOPICS&api_key=4c668174a9439e8e26f6c233750fa3d50d8de4bd2d28fb757fb14b9eec28d111"
+
+# Define parameters for the API request
+params = {
+    "engine": "google_trends",
+    "q": "Lemonade",
+    "data_type": "RELATED_TOPICS",
+    "api_key": api_key
+}
+
+try:
+    # Make the API request
+    response = requests.get(api_url, params=params)
+    response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
+
+    # Parse the JSON response
+    json_data = response.json()
+
+    # Extract related topics
+    related_topics = json_data.get("related_topics", [])
+    print("Related Topics Raw Data:", related_topics)  # Debug: Inspect raw data
+
+    # Create a structured DataFrame if data exists
+    if related_topics:
+        topics_df = pd.DataFrame(related_topics)
+        print("Related Topics DataFrame:")
+        print(topics_df.to_string(index=False))
+    else:
+        print("No related topics data found.")
+
+except requests.exceptions.HTTPError as http_err:
+    print(f"HTTP error occurred: {http_err}")
+except Exception as err:
+    print(f"An error occurred: {err}")
