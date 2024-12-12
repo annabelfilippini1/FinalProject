@@ -1,4 +1,3 @@
-
 import urllib.request
 import json
 import pandas as pd
@@ -6,6 +5,7 @@ import openmeteo_requests
 import requests_cache
 import requests
 from retry_requests import retry
+
 
 # Define the API URL
 url = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/michigan/2023-01-01/2023-12-31?elements=datetime%2Ctempmax%2Ctempmin&include=days&key=L5S34V39G8SNE7QB9SWETFPRD&contentType=json"
@@ -82,40 +82,65 @@ print(daily_dataframe)
 
 import requests
 import pandas as pd
+from datetime import datetime, timedelta
+import time
 
-# Define the API key and endpoint
+# Define API key and endpoint
 api_key = "2cf86170782ffcf4dcffb29f53d499162ec447c38128f29cd9c5cd4d9825d9ee"
-api_url = "https://serpapi.com/google-trends/?q=lemonade&api_key=2cf86170782ffcf4dcffb29f53d499162ec447c38128f29cd9c5cd4d9825d9ee"
-#&date=2023-01-01~2023-12-31
-# Define parameters for the API request
-params = {
-    "engine": "google_trends",
-    "q": "Lemonade",
-    "data_type": "RELATED_TOPICS",
-    "api_key": api_key
-}
+api_url = "https://serpapi.com/search.json"
 
-try:
-    # Make the API request
-    response = requests.get(api_url) #, params=params
-    response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
+# Define start and end dates
+start_date = datetime(2023, 1, 1)
+end_date = datetime(2023, 12, 31)
 
-    # Parse the JSON response
-    json_data = response.json()
+# Initialize lists for storing data
+dates = []
+lemonade_values = []
 
-    # Extract related topics
-    related_topics = json_data.get("related_topics", [])
-    print("Related Topics Raw Data:", related_topics)  # Debug: Inspect raw data
+# Iterate over each day in the year
+current_date = start_date
+while current_date <= end_date:
+    next_date = current_date + timedelta(days=1)
+    date_range = f"{current_date.strftime('%Y-%m-%d')} {next_date.strftime('%Y-%m-%d')}"
+    
+    params = {
+        "engine": "google_trends",
+        "q": "lemonade",
+        "date": date_range,
+        "api_key": api_key
+    }
 
-    # Create a structured DataFrame if data exists
-    if related_topics:
-        topics_df = pd.DataFrame(related_topics)
-        print("Related Topics DataFrame:")
-        print(topics_df.to_string(index=False))
-    else:
-        print("No related topics data found.")
+    try:
+        response = requests.get(api_url, params=params)
+        response.raise_for_status()
+        json_data = response.json()
 
-except requests.exceptions.HTTPError as http_err:
-    print(f"HTTP error occurred: {http_err}")
-except Exception as err:
-    print(f"An error occurred: {err}")
+        # Extract timeline data
+        timeline_data = json_data.get("interest_over_time", {}).get("timeline_data", [])
+        if timeline_data:
+            for entry in timeline_data:
+                dates.append(entry["date"])
+                for value_entry in entry["values"]:
+                    if value_entry["query"] == "lemonade":
+                        lemonade_values.append(value_entry["extracted_value"])
+        else:
+            # No data for this date, append 0
+            dates.append(current_date.strftime('%Y-%m-%d'))
+            lemonade_values.append(0)
+
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred for {current_date.strftime('%Y-%m-%d')}: {http_err}")
+        dates.append(current_date.strftime('%Y-%m-%d'))
+        lemonade_values.append(0)
+    except Exception as e:
+        print(f"An error occurred for {current_date.strftime('%Y-%m-%d')}: {e}")
+        dates.append(current_date.strftime('%Y-%m-%d'))
+        lemonade_values.append(0)
+
+    current_date = next_date
+    time.sleep(2)  # Delay to prevent rate limiting
+
+# Create DataFrame and save results
+df = pd.DataFrame({"Date": dates, "Lemonade": lemonade_values})
+print(df)
+df.to_csv("lemonade_trends_2023.csv", index=False)
