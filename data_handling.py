@@ -84,9 +84,9 @@ import requests
 import pandas as pd
 
 # Define the API key and endpoint
-api_key = "4c668174a9439e8e26f6c233750fa3d50d8de4bd2d28fb757fb14b9eec28d111"
-api_url = "https://serpapi.com/search.json?engine=google_trends&q=lemonade&data_type=RELATED_TOPICS&api_key=4c668174a9439e8e26f6c233750fa3d50d8de4bd2d28fb757fb14b9eec28d111"
-
+api_key = "2cf86170782ffcf4dcffb29f53d499162ec447c38128f29cd9c5cd4d9825d9ee"
+api_url = "https://serpapi.com/google-trends/?q=lemonade&api_key=2cf86170782ffcf4dcffb29f53d499162ec447c38128f29cd9c5cd4d9825d9ee"
+#&date=2023-01-01~2023-12-31
 # Define parameters for the API request
 params = {
     "engine": "google_trends",
@@ -97,7 +97,7 @@ params = {
 
 try:
     # Make the API request
-    response = requests.get(api_url, params=params)
+    response = requests.get(api_url) #, params=params
     response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
 
     # Parse the JSON response
