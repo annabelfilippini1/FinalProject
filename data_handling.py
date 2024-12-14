@@ -80,12 +80,13 @@ print(daily_dataframe)
 
 # GOOGLE TRENDS
 
+import sqlite3
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import time
 
-# Define API key and endpoint
+# SQLite Database Connection
 api_key = "2cf86170782ffcf4dcffb29f53d499162ec447c38128f29cd9c5cd4d9825d9ee"
 api_url = "https://serpapi.com/search.json"
 
@@ -93,8 +94,13 @@ api_url = "https://serpapi.com/search.json"
 start_date = datetime(2023, 1, 1)
 end_date = datetime(2023, 12, 31)
 
+# For testing, you can limit to a smaller range:
+# start_date = datetime(2023, 1, 1)
+# end_date = datetime(2023, 1, 7)
+
 # Initialize lists for storing data
 dates = []
+hot_chocolate_values = []
 lemonade_values = []
 
 # Iterate over each day in the year
@@ -102,45 +108,69 @@ current_date = start_date
 while current_date <= end_date:
     next_date = current_date + timedelta(days=1)
     date_range = f"{current_date.strftime('%Y-%m-%d')} {next_date.strftime('%Y-%m-%d')}"
-    
-    params = {
-        "engine": "google_trends",
-        "q": "lemonade",
-        "date": date_range,
-        "api_key": api_key
-    }
 
     try:
-        response = requests.get(api_url, params=params)
-        response.raise_for_status()
-        json_data = response.json()
+        # Get data for "hot chocolate"
+        params_hot_chocolate = {
+            "engine": "google_trends",
+            "q": "hot chocolate",
+            "date": date_range,
+            "api_key": api_key
+        }
+        response_hot_chocolate = requests.get(api_url, params=params_hot_chocolate)
+        response_hot_chocolate.raise_for_status()
+        hot_chocolate_data = response_hot_chocolate.json().get("interest_over_time", {}).get("timeline_data", [])
+        hot_chocolate_value = sum(entry["values"][0]["extracted_value"] for entry in hot_chocolate_data) if hot_chocolate_data else 0
 
-        # Extract timeline data
-        timeline_data = json_data.get("interest_over_time", {}).get("timeline_data", [])
-        if timeline_data:
-            for entry in timeline_data:
-                dates.append(entry["date"])
-                for value_entry in entry["values"]:
-                    if value_entry["query"] == "lemonade":
-                        lemonade_values.append(value_entry["extracted_value"])
-        else:
-            # No data for this date, append 0
-            dates.append(current_date.strftime('%Y-%m-%d'))
-            lemonade_values.append(0)
+        # Get data for "lemonade"
+        params_lemonade = {
+            "engine": "google_trends",
+            "q": "lemonade",
+            "date": date_range,
+            "api_key": api_key
+        }
+        response_lemonade = requests.get(api_url, params=params_lemonade)
+        response_lemonade.raise_for_status()
+        lemonade_data = response_lemonade.json().get("interest_over_time", {}).get("timeline_data", [])
+        lemonade_value = sum(entry["values"][0]["extracted_value"] for entry in lemonade_data) if lemonade_data else 0
 
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred for {current_date.strftime('%Y-%m-%d')}: {http_err}")
+        # Append to lists
         dates.append(current_date.strftime('%Y-%m-%d'))
-        lemonade_values.append(0)
+        hot_chocolate_values.append(hot_chocolate_value)
+        lemonade_values.append(lemonade_value)
+
+        # Print progress for each date
+        # After the loop ends, print all processed data
+        for date, hot_chocolate, lemonade in zip(dates, hot_chocolate_values, lemonade_values):
+            print(f"{date} - Hot Chocolate: {hot_chocolate}, Lemonade: {lemonade}")
+
+
     except Exception as e:
-        print(f"An error occurred for {current_date.strftime('%Y-%m-%d')}: {e}")
+        print(f"Error on {current_date.strftime('%Y-%m-%d')}: {e}")
         dates.append(current_date.strftime('%Y-%m-%d'))
+        hot_chocolate_values.append(0)
         lemonade_values.append(0)
 
+    # Move to the next day
     current_date = next_date
     time.sleep(2)  # Delay to prevent rate limiting
 
-# Create DataFrame and save results
-df = pd.DataFrame({"Date": dates, "Lemonade": lemonade_values})
-print(df)
-df.to_csv("lemonade_trends_2023.csv", index=False)
+# Create a DataFrame with the results
+trends_df = pd.DataFrame({
+    "date": dates,
+    "hot_chocolate": hot_chocolate_values,
+    "lemonade": lemonade_values
+})
+
+# Print the first few rows of the trends data to verify it worked
+print("Trends Data Sample:")
+print(trends_df.head())
+
+# Save the DataFrame to the SQLite database
+trends_df.to_sql("trends_data", conn, if_exists="replace", index=False)
+
+# Confirm successful creation
+print("Third table 'trends_data' created successfully.")
+
+# Close the database connection
+conn.close()
