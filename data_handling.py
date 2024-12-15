@@ -8,6 +8,8 @@ from retry_requests import retry
 import sqlite3
 import time
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+
 
 # Connect to the SQLite database (or create it if it doesn't exist)
 conn = sqlite3.connect('weather_data.db')
@@ -104,7 +106,7 @@ except Exception as e:
     print(f"Error fetching UV index data: {e}")
 
 # Fetch Google Trends data for "hot chocolate" and "lemonade"
-api_key = "552d227a0879659e3be0fef56aec1222ffdf9cd6eb4b190db12b616824a929eb"
+api_key = "62844a59beea731fde941dfd82872072e6bc3f6e16fd71d800193ab39bd3f13e"
 api_url = "https://serpapi.com/search.json"
 
 start_date = datetime(2023, 1, 1)
@@ -164,5 +166,60 @@ trends_df.to_sql('google_searches', conn, if_exists='replace', index=False)
 
 print("Google Trends data saved successfully.")
 
+#graphs!!
+conn = sqlite3.connect('weather_data.db')
+
+# Load the tables into DataFrames
+temp_data = pd.read_sql('SELECT * FROM daily_temperatures', conn)
+uv_data = pd.read_sql('SELECT * FROM daily_uv_index', conn)
+search_data = pd.read_sql('SELECT * FROM google_searches', conn)
+
+# Close the database connection
+conn.close()
+
+# Convert the date columns to datetime for merging
+temp_data['date'] = pd.to_datetime(temp_data['date'])
+uv_data['date'] = pd.to_datetime(uv_data['date'])
+search_data['date'] = pd.to_datetime(search_data['date'])
+
+# Merge all tables on the 'date' column
+merged_data = temp_data.merge(uv_data, on='date').merge(search_data, on='date')
+
+# Display the first few rows of the merged DataFrame
+print(merged_data.head())
+
+
+merged_data['month'] = pd.to_datetime(merged_data['date']).dt.to_period('M')
+
+# Aggregate data by month
+monthly_data = merged_data.groupby('month').mean()
+
+# First graph: Temperature, UV, and Hot Chocolate trends
+plt.figure(figsize=(12, 6))
+plt.plot(monthly_data.index.astype(str), monthly_data['high_temperature'], label='Temperature (°F)')
+plt.plot(monthly_data.index.astype(str), monthly_data['high_uv'], label='UV Index')
+plt.plot(monthly_data.index.astype(str), monthly_data['hot_chocolate_searches'], label='Hot Chocolate Searches')
+plt.title('Monthly Trends: Temperature, UV, and Hot Chocolate Searches (2023)')
+plt.xlabel('Month')
+plt.ylabel('Values')
+plt.legend()
+plt.grid()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# Second graph: Temperature, UV, and Lemonade trends
+plt.figure(figsize=(12, 6))
+plt.plot(monthly_data.index.astype(str), monthly_data['high_temperature'], label='Temperature (°F)')
+plt.plot(monthly_data.index.astype(str), monthly_data['high_uv'], label='UV Index')
+plt.plot(monthly_data.index.astype(str), monthly_data['lemonade_searches'], label='Lemonade Searches')
+plt.title('Monthly Trends: Temperature, UV, and Lemonade Searches (2023)')
+plt.xlabel('Month')
+plt.ylabel('Values')
+plt.legend()
+plt.grid()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
 # Close the database connection
 conn.close()
