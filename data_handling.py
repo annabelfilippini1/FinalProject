@@ -15,23 +15,39 @@ import matplotlib.pyplot as plt
 conn = sqlite3.connect('weather_data.db')
 cursor = conn.cursor()
 
-# Create the first table: daily temperatures
+cursor.execute('DROP TABLE IF EXISTS daily_temperatures')
+cursor.execute('DROP TABLE IF EXISTS daily_uv_index')
+cursor.execute('DROP TABLE IF EXISTS weather_summary')
+cursor.execute('DROP TABLE IF EXISTS google_searches')
+# Create the summary table: weather_summary
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS weather_summary (
+        weather_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        location TEXT,
+        start_date TEXT,
+        end_date TEXT
+    )
+''')
+
+# Modify the daily_temperatures table to include weather_id
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS daily_temperatures (
+        weather_id INTEGER,
         date TEXT PRIMARY KEY,
-        high_temperature REAL
+        high_temperature REAL,
+        FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
     )
 ''')
 
-# Create the second table: daily UV index
+# Modify the daily_uv_index table to include weather_id
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS daily_uv_index (
+        weather_id INTEGER,
         date TEXT PRIMARY KEY,
-        high_uv REAL
+        high_uv REAL,
+        FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
     )
 ''')
-
-# Create the third table: Google searches for hot chocolate and lemonade
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS google_searches (
         date TEXT PRIMARY KEY,
@@ -39,9 +55,17 @@ cursor.execute('''
         lemonade_searches INTEGER
     )
 ''')
-
-# Commit all changes
+# Commit schema changes
 conn.commit()
+
+def insert_weather_summary(location, start_date, end_date):
+    cursor.execute('''
+        INSERT INTO weather_summary (location, start_date, end_date)
+        VALUES (?, ?, ?)
+    ''', (location, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
+    conn.commit()
+    return cursor.lastrowid  # Return the generated weather_id
+
 
 # Fetch the most recent date for each table
 def get_last_date(table_name):
@@ -54,6 +78,10 @@ def fetch_weather_data():
     last_date = get_last_date('daily_temperatures')
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
     end_date = start_date + timedelta(days=24)
+
+    # Insert a summary record and get weather_id
+    weather_id = insert_weather_summary("Michigan", start_date, end_date)
+
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/michigan/{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}?elements=datetime%2Ctempmax%2Ctempmin&include=days&key=L5S34V39G8SNE7QB9SWETFPRD&contentType=json"
 
     try:
@@ -61,25 +89,23 @@ def fetch_weather_data():
         jsonData = json.load(response)
         daily_data = jsonData.get("days", [])
         weather_data = pd.DataFrame([
-            {"date": day["datetime"], "high_temperature": day["tempmax"]}
+            {"weather_id": weather_id, "date": day["datetime"], "high_temperature": day["tempmax"]}
             for day in daily_data
         ])
         weather_data.to_sql('daily_temperatures', conn, if_exists='append', index=False)
         print(f"Stored weather data from {start_date} to {end_date}.")
-        
-        # Print the contents of the 'daily_temperatures' table
-        cursor.execute("SELECT * FROM daily_temperatures")
-        rows = cursor.fetchall()
-        for row in rows:
-            print(row)
     except Exception as e:
         print(f"Error fetching weather data: {e}")
+
 
 # Fetch up to 25 items from the UV index API
 def fetch_uv_data():
     last_date = get_last_date('daily_uv_index')
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
     end_date = start_date + timedelta(days=24)
+
+    # Insert a summary record and get weather_id
+    weather_id = insert_weather_summary("Michigan", start_date, end_date)
 
     url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
     params = {
@@ -96,19 +122,15 @@ def fetch_uv_data():
         response = requests.get(url, params=params).json()
         daily_data = response.get("daily", {})
         uv_data = pd.DataFrame({
+            "weather_id": weather_id,
             "date": daily_data["time"],
             "high_uv": daily_data["uv_index_max"]
         })
         uv_data.to_sql('daily_uv_index', conn, if_exists='append', index=False)
         print(f"Stored UV data from {start_date} to {end_date}.")
-        
-        # Print the contents of the 'daily_uv_index' table
-        cursor.execute("SELECT * FROM daily_uv_index")
-        rows = cursor.fetchall()
-        for row in rows:
-            print(row)
     except Exception as e:
         print(f"Error fetching UV data: {e}")
+
 
 # Fetch up to 25 items from the Google Trends API
 def fetch_google_trends_data():
