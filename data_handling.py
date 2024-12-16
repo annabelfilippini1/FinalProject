@@ -1,25 +1,17 @@
 import urllib.request
 import json
 import pandas as pd
-import openmeteo_requests
-import requests_cache
-import requests
-from retry_requests import retry
 import sqlite3
-import time
+import requests
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
-
 
 # Connect to the SQLite database (or create it if it doesn't exist)
 conn = sqlite3.connect('weather_data.db')
 cursor = conn.cursor()
 
-cursor.execute('DROP TABLE IF EXISTS daily_temperatures')
-cursor.execute('DROP TABLE IF EXISTS daily_uv_index')
-cursor.execute('DROP TABLE IF EXISTS weather_summary')
-cursor.execute('DROP TABLE IF EXISTS google_searches')
-# Create the summary table: weather_summary
+# Create database schema
+# Ensure tables exist without resetting data
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS weather_summary (
         weather_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,8 +20,6 @@ cursor.execute('''
         end_date TEXT
     )
 ''')
-
-# Modify the daily_temperatures table to include weather_id
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS daily_temperatures (
         weather_id INTEGER,
@@ -38,8 +28,6 @@ cursor.execute('''
         FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
     )
 ''')
-
-# Modify the daily_uv_index table to include weather_id
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS daily_uv_index (
         weather_id INTEGER,
@@ -55,32 +43,65 @@ cursor.execute('''
         lemonade_searches INTEGER
     )
 ''')
-# Commit schema changes
 conn.commit()
 
-def insert_weather_summary(location, start_date, end_date):
+
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS weather_summary (
+        weather_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        location TEXT,
+        start_date TEXT,
+        end_date TEXT
+    )
+''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS daily_temperatures (
+        weather_id INTEGER,
+        date TEXT PRIMARY KEY,
+        high_temperature REAL,
+        FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
+    )
+''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS daily_uv_index (
+        weather_id INTEGER,
+        date TEXT PRIMARY KEY,
+        high_uv REAL,
+        FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
+    )
+''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS google_searches (
+        date TEXT PRIMARY KEY,
+        hot_chocolate_searches INTEGER,
+        lemonade_searches INTEGER
+    )
+''')
+conn.commit()
+
+# Function to check existing data
+def get_last_date(table_name, cursor):
+    cursor.execute(f"SELECT MAX(date) FROM {table_name}")
+    result = cursor.fetchone()[0]
+    return datetime.strptime(result, '%Y-%m-%d') if result else None
+
+
+# Function to insert weather summary
+def insert_weather_summary(location, start_date, end_date, cursor):
     cursor.execute('''
         INSERT INTO weather_summary (location, start_date, end_date)
         VALUES (?, ?, ?)
     ''', (location, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
     conn.commit()
-    return cursor.lastrowid  # Return the generated weather_id
+    return cursor.lastrowid
 
-
-# Fetch the most recent date for each table
-def get_last_date(table_name):
-    cursor.execute(f"SELECT MAX(date) FROM {table_name}")
-    result = cursor.fetchone()[0]
-    return datetime.strptime(result, '%Y-%m-%d') if result else None
-
-# Fetch up to 25 items from the weather API
-def fetch_weather_data():
-    last_date = get_last_date('daily_temperatures')
+# Fetch weather data
+def fetch_weather_data(conn, cursor):
+    last_date = get_last_date('daily_temperatures', cursor)
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
     end_date = start_date + timedelta(days=24)
 
-    # Insert a summary record and get weather_id
-    weather_id = insert_weather_summary("Michigan", start_date, end_date)
+    weather_id = insert_weather_summary("Michigan", start_date, end_date, cursor)
 
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/michigan/{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}?elements=datetime%2Ctempmax%2Ctempmin&include=days&key=L5S34V39G8SNE7QB9SWETFPRD&contentType=json"
 
@@ -97,15 +118,13 @@ def fetch_weather_data():
     except Exception as e:
         print(f"Error fetching weather data: {e}")
 
-
-# Fetch up to 25 items from the UV index API
-def fetch_uv_data():
-    last_date = get_last_date('daily_uv_index')
+# Fetch UV index data
+def fetch_uv_data(conn, cursor):
+    last_date = get_last_date('daily_uv_index', cursor)
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
     end_date = start_date + timedelta(days=24)
 
-    # Insert a summary record and get weather_id
-    weather_id = insert_weather_summary("Michigan", start_date, end_date)
+    weather_id = insert_weather_summary("Michigan", start_date, end_date, cursor)
 
     url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
     params = {
@@ -131,14 +150,13 @@ def fetch_uv_data():
     except Exception as e:
         print(f"Error fetching UV data: {e}")
 
-
-# Fetch up to 25 items from the Google Trends API
-def fetch_google_trends_data():
-    last_date = get_last_date('google_searches')
+# Fetch Google Trends data
+def fetch_google_trends_data(conn, cursor):
+    last_date = get_last_date('google_searches', cursor)
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
     end_date = start_date + timedelta(days=24)
 
-    api_key = "fd786e6ee27c1497261eaf57a23bf548c8772fb361d4b43f9745d57a7b9957a9"
+    api_key = "YOUR_API_KEY"
     api_url = "https://serpapi.com/search.json"
 
     dates, hot_chocolate_values, lemonade_values = [], [], []
@@ -154,8 +172,7 @@ def fetch_google_trends_data():
                 "api_key": api_key
             }
             response_hot_chocolate = requests.get(api_url, params=params_hot_chocolate).json()
-            hot_chocolate_data = response_hot_chocolate.get("interest_over_time", {}).get("timeline_data", [])
-            hot_chocolate_value = sum(entry["values"][0]["value"] for entry in hot_chocolate_data) if hot_chocolate_data else 0
+            hot_chocolate_value = sum(entry.get("value", 0) for entry in response_hot_chocolate.get("timeline_data", []))
 
             # Fetch lemonade trends
             params_lemonade = {
@@ -165,8 +182,7 @@ def fetch_google_trends_data():
                 "api_key": api_key
             }
             response_lemonade = requests.get(api_url, params=params_lemonade).json()
-            lemonade_data = response_lemonade.get("interest_over_time", {}).get("timeline_data", [])
-            lemonade_value = sum(entry["values"][0]["value"] for entry in lemonade_data) if lemonade_data else 0
+            lemonade_value = sum(entry.get("value", 0) for entry in response_lemonade.get("timeline_data", []))
 
             # Append results
             dates.append(current_date.strftime('%Y-%m-%d'))
@@ -188,132 +204,124 @@ def fetch_google_trends_data():
     trends_df.to_sql('google_searches', conn, if_exists='append', index=False)
     print(f"Stored Google Trends data from {start_date} to {end_date}.")
 
-    # Print the contents of the 'google_searches' table
-    cursor.execute("SELECT * FROM google_searches")
-    rows = cursor.fetchall()
-    for row in rows:
-        print(row)
+# Ensure minimum records in the database
+# Ensure minimum records in the database
+def ensure_minimum_records(cursor):
+    cursor.execute("SELECT COUNT(*) FROM daily_temperatures")
+    record_count = cursor.fetchone()[0]
+    print(f"Total records in 'daily_temperatures': {record_count}")
+    if record_count < 100:
+        print("Run the script again to gather more data.")
+    else:
+        print("Sufficient data has been collected.")
+
+if __name__ == "__main__":
+    # Clear all existing records to restart from batch 1
+    cursor.execute('DELETE FROM daily_temperatures')
+    cursor.execute('DELETE FROM daily_uv_index')
+    cursor.execute('DELETE FROM google_searches')
+    cursor.execute('DELETE FROM weather_summary')
+    conn.commit()
+    print("All tables have been cleared. Starting fresh.")
 
 
-# Fetch data from APIs
-fetch_weather_data()
-fetch_uv_data()
-fetch_google_trends_data()
+    # Fetch data in batches
+    batch_count = 0
+    while True:
+        print(f"Starting batch {batch_count + 1}...")
+        ensure_minimum_records(cursor)
 
-temp_data = pd.read_sql('SELECT * FROM daily_temperatures', conn)
-uv_data = pd.read_sql('SELECT * FROM daily_uv_index', conn)
-search_data = pd.read_sql('SELECT * FROM google_searches', conn)
+        # Fetch and store data
+        fetch_weather_data(conn, cursor)
+        fetch_uv_data(conn, cursor)
+        fetch_google_trends_data(conn, cursor)
 
-temp_data['date'] = pd.to_datetime(temp_data['date'])
-uv_data['date'] = pd.to_datetime(uv_data['date'])
-search_data['date'] = pd.to_datetime(search_data['date'])
+        batch_count += 1
+        print(f"Batch {batch_count} fetched and stored.")
 
-# Merge Data
-merged_data = temp_data.merge(uv_data, on='date').merge(search_data, on='date')
+        # Check if 100+ records have been collected
+        cursor.execute("SELECT COUNT(*) FROM daily_temperatures")
+        record_count = cursor.fetchone()[0]
+        if record_count >= 100:
+            print(f"100+ records collected after {batch_count} batches. Stopping.")
+            break
 
-# Sort data by date
-merged_data = merged_data.sort_values(by='date')
+    
 
+    # Data analysis and visualization
+    temp_data = pd.read_sql('SELECT * FROM daily_temperatures', conn)
+    uv_data = pd.read_sql('SELECT * FROM daily_uv_index', conn)
+    search_data = pd.read_sql('SELECT * FROM google_searches', conn)
 
-# --- Graph 1: Temperature and UV Index ---
-plt.figure(figsize=(12, 6))
-plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
-plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+    # Convert dates to datetime format
+    temp_data['date'] = pd.to_datetime(temp_data['date'])
+    uv_data['date'] = pd.to_datetime(uv_data['date'])
+    search_data['date'] = pd.to_datetime(search_data['date'])
 
-# Primary y-axis: Temperature
-fig, ax1 = plt.subplots(figsize=(12, 6))
-ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
-ax1.set_xlabel('Date')
-ax1.set_ylabel('Temperature (°F)', color='tab:blue')
-ax1.tick_params(axis='y', labelcolor='tab:blue')
-# Secondary y-axis: UV Index
-ax2 = ax1.twinx()
-ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
-ax2.set_ylabel('UV Index', color='tab:orange')
-ax2.tick_params(axis='y', labelcolor='tab:orange')
-# Title, grid, and layout
-plt.title('Daily Trends: Temperature and UV Index (2023)')
-plt.xlabel('Date')
-plt.ylabel('Values')
-ax1.xaxis.set_major_locator(plt.MaxNLocator(12))
-plt.xticks(rotation=45, fontsize=8)
-plt.gca().xaxis.set_major_locator(plt.MaxNLocator(12))
-plt.legend()
-fig.tight_layout()
-plt.grid()
-plt.tight_layout()
-plt.show()
+    # Merge data
+    merged_data = temp_data.merge(uv_data, on='date').merge(search_data, on='date')
+    merged_data = merged_data.sort_values(by='date')
 
-# --- Graph 2: Temperature, UV Index, and Lemonade Searches ---
-plt.figure(figsize=(12, 6))
-plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
-plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
-plt.plot(merged_data['date'], merged_data['lemonade_searches'], label='Lemonade Searches', color='tab:green')
-fig, ax1 = plt.subplots(figsize=(12, 6))
-# Primary y-axis: Temperature
-ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
-ax1.set_xlabel('Date')
-ax1.set_ylabel('Temperature (°F)', color='tab:blue')
-ax1.tick_params(axis='y', labelcolor='tab:blue')
-# Secondary y-axis: UV Index
-ax2 = ax1.twinx()
-ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
-ax2.set_ylabel('UV Index', color='tab:orange')
-ax2.tick_params(axis='y', labelcolor='tab:orange')
-# Tertiary y-axis: Lemonade Searches
-ax3 = ax1.twinx()
-ax3.spines.right.set_position(("outward", 60))
-ax3.plot(merged_data['date'], merged_data['lemonade_searches'], label='Lemonade Searches', color='tab:green')
-ax3.set_ylabel('Lemonade Searches', color='tab:green')
-ax3.tick_params(axis='y', labelcolor='tab:green')
-# Title, grid, and layout
-plt.title('Daily Trends: Temperature, UV Index, and Lemonade Searches (2023)')
-plt.xlabel('Date')
-plt.ylabel('Values')
-ax1.xaxis.set_major_locator(plt.MaxNLocator(12))
-plt.xticks(rotation=45, fontsize=8)
-plt.gca().xaxis.set_major_locator(plt.MaxNLocator(12))
-plt.legend()
-fig.tight_layout()
-plt.grid()
-plt.tight_layout()
-plt.show()
+    # Calculations
+    avg_temp = merged_data['high_temperature'].mean()
+    print(f"Average Temperature: {avg_temp:.2f} °F")
 
-# --- Graph 3: Temperature, UV Index, and Hot Chocolate Searches ---
-plt.figure(figsize=(12, 6))
-plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
-plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
-plt.plot(merged_data['date'], merged_data['hot_chocolate_searches'], label='Hot Chocolate Searches', color='tab:red')
-fig, ax1 = plt.subplots(figsize=(12, 6))
-# Primary y-axis: Temperature
-ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
-ax1.set_xlabel('Date')
-ax1.set_ylabel('Temperature (°F)', color='tab:blue')
-ax1.tick_params(axis='y', labelcolor='tab:blue')
-# Secondary y-axis: UV Index
-ax2 = ax1.twinx()
-ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
-ax2.set_ylabel('UV Index', color='tab:orange')
-ax2.tick_params(axis='y', labelcolor='tab:orange')
-# Tertiary y-axis: Hot Chocolate Searches
-ax3 = ax1.twinx()
-ax3.spines.right.set_position(("outward", 60))
-ax3.plot(merged_data['date'], merged_data['hot_chocolate_searches'], label='Hot Chocolate Searches', color='tab:red')
-ax3.set_ylabel('Hot Chocolate Searches', color='tab:red')
-ax3.tick_params(axis='y', labelcolor='tab:red')
-# Title, grid, and layout
-plt.title('Daily Trends: Temperature, UV Index, and Hot Chocolate Searches (2023)')
-plt.xlabel('Date')
-plt.ylabel('Values')
-ax1.xaxis.set_major_locator(plt.MaxNLocator(12))
-plt.xticks(rotation=45, fontsize=8)
-plt.gca().xaxis.set_major_locator(plt.MaxNLocator(12))
-plt.legend()
-fig.tight_layout()
-plt.grid()
-plt.tight_layout()
-plt.show()
-# Close the database connection
-#conn.close()
+    max_uv = merged_data['high_uv'].max()
+    max_uv_date = merged_data.loc[merged_data['high_uv'].idxmax(), 'date']
+    print(f"Maximum UV Index: {max_uv} on {max_uv_date}")
 
+    # --- Graph 1: Temperature and UV Index ---
+    plt.figure(figsize=(12, 6))
+    plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+    plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+    plt.title('Daily Trends: Temperature and UV Index (2023)')
+    plt.xlabel('Date')
+    plt.ylabel('Values')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
 
+    # --- Graph 2: Temperature, UV Index, and Lemonade Searches ---
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Temperature (°F)', color='tab:blue')
+    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    ax2 = ax1.twinx()
+    ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+    ax2.set_ylabel('UV Index', color='tab:orange')
+    ax2.tick_params(axis='y', labelcolor='tab:orange')
+    ax3 = ax1.twinx()
+    ax3.spines.right.set_position(("outward", 60))
+    ax3.plot(merged_data['date'], merged_data['lemonade_searches'], label='Lemonade Searches', color='tab:green')
+    ax3.set_ylabel('Lemonade Searches', color='tab:green')
+    ax3.tick_params(axis='y', labelcolor='tab:green')
+    plt.title('Daily Trends: Temperature, UV Index, and Lemonade Searches (2023)')
+    plt.grid(True)
+    fig.tight_layout()
+    plt.show()
+
+    # --- Graph 3: Temperature, UV Index, and Hot Chocolate Searches ---
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Temperature (°F)', color='tab:blue')
+    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    ax2 = ax1.twinx()
+    ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+    ax2.set_ylabel('UV Index', color='tab:orange')
+    ax2.tick_params(axis='y', labelcolor='tab:orange')
+    ax3 = ax1.twinx()
+    ax3.spines.right.set_position(("outward", 60))
+    ax3.plot(merged_data['date'], merged_data['hot_chocolate_searches'], label='Hot Chocolate Searches', color='tab:red')
+    ax3.set_ylabel('Hot Chocolate Searches', color='tab:red')
+    ax3.tick_params(axis='y', labelcolor='tab:red')
+    plt.title('Daily Trends: Temperature, UV Index, and Hot Chocolate Searches (2023)')
+    plt.grid(True)
+    fig.tight_layout()
+    plt.show()
+
+    # Close the database connection
+    conn.close()
