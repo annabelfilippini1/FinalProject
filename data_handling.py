@@ -1,11 +1,15 @@
 import urllib.request
 import json
 import pandas as pd
+import openmeteo_requests
 import requests_cache
 import requests
 from retry_requests import retry
 import sqlite3
+import time
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+
 
 # Connect to the SQLite database (or create it if it doesn't exist)
 conn = sqlite3.connect('weather_data.db')
@@ -174,5 +178,120 @@ fetch_weather_data()
 fetch_uv_data()
 fetch_google_trends_data()
 
+temp_data = pd.read_sql('SELECT * FROM daily_temperatures', conn)
+uv_data = pd.read_sql('SELECT * FROM daily_uv_index', conn)
+search_data = pd.read_sql('SELECT * FROM google_searches', conn)
+
+temp_data['date'] = pd.to_datetime(temp_data['date'])
+uv_data['date'] = pd.to_datetime(uv_data['date'])
+search_data['date'] = pd.to_datetime(search_data['date'])
+
+# Merge Data
+merged_data = temp_data.merge(uv_data, on='date').merge(search_data, on='date')
+
+# Sort data by date
+merged_data = merged_data.sort_values(by='date')
+
+
+# --- Graph 1: Temperature and UV Index ---
+plt.figure(figsize=(12, 6))
+plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+
+# Primary y-axis: Temperature
+fig, ax1 = plt.subplots(figsize=(12, 6))
+ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+ax1.set_xlabel('Date')
+ax1.set_ylabel('Temperature (°F)', color='tab:blue')
+ax1.tick_params(axis='y', labelcolor='tab:blue')
+# Secondary y-axis: UV Index
+ax2 = ax1.twinx()
+ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+ax2.set_ylabel('UV Index', color='tab:orange')
+ax2.tick_params(axis='y', labelcolor='tab:orange')
+# Title, grid, and layout
+plt.title('Daily Trends: Temperature and UV Index (2023)')
+plt.xlabel('Date')
+plt.ylabel('Values')
+ax1.xaxis.set_major_locator(plt.MaxNLocator(12))
+plt.xticks(rotation=45, fontsize=8)
+plt.gca().xaxis.set_major_locator(plt.MaxNLocator(12))
+plt.legend()
+fig.tight_layout()
+plt.grid()
+plt.tight_layout()
+plt.show()
+
+# --- Graph 2: Temperature, UV Index, and Lemonade Searches ---
+plt.figure(figsize=(12, 6))
+plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+plt.plot(merged_data['date'], merged_data['lemonade_searches'], label='Lemonade Searches', color='tab:green')
+fig, ax1 = plt.subplots(figsize=(12, 6))
+# Primary y-axis: Temperature
+ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+ax1.set_xlabel('Date')
+ax1.set_ylabel('Temperature (°F)', color='tab:blue')
+ax1.tick_params(axis='y', labelcolor='tab:blue')
+# Secondary y-axis: UV Index
+ax2 = ax1.twinx()
+ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+ax2.set_ylabel('UV Index', color='tab:orange')
+ax2.tick_params(axis='y', labelcolor='tab:orange')
+# Tertiary y-axis: Lemonade Searches
+ax3 = ax1.twinx()
+ax3.spines.right.set_position(("outward", 60))
+ax3.plot(merged_data['date'], merged_data['lemonade_searches'], label='Lemonade Searches', color='tab:green')
+ax3.set_ylabel('Lemonade Searches', color='tab:green')
+ax3.tick_params(axis='y', labelcolor='tab:green')
+# Title, grid, and layout
+plt.title('Daily Trends: Temperature, UV Index, and Lemonade Searches (2023)')
+plt.xlabel('Date')
+plt.ylabel('Values')
+ax1.xaxis.set_major_locator(plt.MaxNLocator(12))
+plt.xticks(rotation=45, fontsize=8)
+plt.gca().xaxis.set_major_locator(plt.MaxNLocator(12))
+plt.legend()
+fig.tight_layout()
+plt.grid()
+plt.tight_layout()
+plt.show()
+
+# --- Graph 3: Temperature, UV Index, and Hot Chocolate Searches ---
+plt.figure(figsize=(12, 6))
+plt.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+plt.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+plt.plot(merged_data['date'], merged_data['hot_chocolate_searches'], label='Hot Chocolate Searches', color='tab:red')
+fig, ax1 = plt.subplots(figsize=(12, 6))
+# Primary y-axis: Temperature
+ax1.plot(merged_data['date'], merged_data['high_temperature'], label='Temperature (°F)', color='tab:blue')
+ax1.set_xlabel('Date')
+ax1.set_ylabel('Temperature (°F)', color='tab:blue')
+ax1.tick_params(axis='y', labelcolor='tab:blue')
+# Secondary y-axis: UV Index
+ax2 = ax1.twinx()
+ax2.plot(merged_data['date'], merged_data['high_uv'], label='UV Index', color='tab:orange')
+ax2.set_ylabel('UV Index', color='tab:orange')
+ax2.tick_params(axis='y', labelcolor='tab:orange')
+# Tertiary y-axis: Hot Chocolate Searches
+ax3 = ax1.twinx()
+ax3.spines.right.set_position(("outward", 60))
+ax3.plot(merged_data['date'], merged_data['hot_chocolate_searches'], label='Hot Chocolate Searches', color='tab:red')
+ax3.set_ylabel('Hot Chocolate Searches', color='tab:red')
+ax3.tick_params(axis='y', labelcolor='tab:red')
+# Title, grid, and layout
+plt.title('Daily Trends: Temperature, UV Index, and Hot Chocolate Searches (2023)')
+plt.xlabel('Date')
+plt.ylabel('Values')
+ax1.xaxis.set_major_locator(plt.MaxNLocator(12))
+plt.xticks(rotation=45, fontsize=8)
+plt.gca().xaxis.set_major_locator(plt.MaxNLocator(12))
+plt.legend()
+fig.tight_layout()
+plt.grid()
+plt.tight_layout()
+plt.show()
 # Close the database connection
-conn.close()
+#conn.close()
+
+
