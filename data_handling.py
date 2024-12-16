@@ -110,52 +110,49 @@ def fetch_uv_data():
 def fetch_google_trends_data():
     last_date = get_last_date('google_searches')
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
-    current_date = start_date
     end_date = start_date + timedelta(days=24)
 
-    api_key = "72ff678e37dea74e2b10311926bec806544ce078eab7be36a6276d3ed3da3944"
+    api_key = "fd786e6ee27c1497261eaf57a23bf548c8772fb361d4b43f9745d57a7b9957a9"
     api_url = "https://serpapi.com/search.json"
 
     dates, hot_chocolate_values, lemonade_values = [], [], []
 
+    current_date = start_date
     while current_date <= end_date:
-        next_date = current_date + timedelta(days=1)
-        date_range = f"{current_date.strftime('%Y-%m-%d')} {next_date.strftime('%Y-%m-%d')}"
-
         try:
-            # Hot Chocolate data
+            # Fetch hot chocolate trends
             params_hot_chocolate = {
                 "engine": "google_trends",
                 "q": "hot chocolate",
-                "date": date_range,
+                "date": current_date.strftime('%Y-%m-%d'),
                 "api_key": api_key
             }
             response_hot_chocolate = requests.get(api_url, params=params_hot_chocolate).json()
             hot_chocolate_data = response_hot_chocolate.get("interest_over_time", {}).get("timeline_data", [])
-            hot_chocolate_value = sum(entry["values"][0]["extracted_value"] for entry in hot_chocolate_data) if hot_chocolate_data else 0
+            hot_chocolate_value = sum(entry["values"][0]["value"] for entry in hot_chocolate_data) if hot_chocolate_data else 0
 
-            # Lemonade data
+            # Fetch lemonade trends
             params_lemonade = {
                 "engine": "google_trends",
                 "q": "lemonade",
-                "date": date_range,
+                "date": current_date.strftime('%Y-%m-%d'),
                 "api_key": api_key
             }
             response_lemonade = requests.get(api_url, params=params_lemonade).json()
             lemonade_data = response_lemonade.get("interest_over_time", {}).get("timeline_data", [])
-            lemonade_value = sum(entry["values"][0]["extracted_value"] for entry in lemonade_data) if lemonade_data else 0
+            lemonade_value = sum(entry["values"][0]["value"] for entry in lemonade_data) if lemonade_data else 0
 
             # Append results
             dates.append(current_date.strftime('%Y-%m-%d'))
             hot_chocolate_values.append(hot_chocolate_value)
             lemonade_values.append(lemonade_value)
         except Exception as e:
-            print(f"Error on {current_date.strftime('%Y-%m-%d')}: {e}")
+            print(f"Error fetching data for {current_date.strftime('%Y-%m-%d')}: {e}")
             dates.append(current_date.strftime('%Y-%m-%d'))
             hot_chocolate_values.append(0)
             lemonade_values.append(0)
 
-        current_date = next_date
+        current_date += timedelta(days=1)
 
     trends_df = pd.DataFrame({
         "date": dates,
@@ -164,12 +161,13 @@ def fetch_google_trends_data():
     })
     trends_df.to_sql('google_searches', conn, if_exists='append', index=False)
     print(f"Stored Google Trends data from {start_date} to {end_date}.")
-    
+
     # Print the contents of the 'google_searches' table
     cursor.execute("SELECT * FROM google_searches")
     rows = cursor.fetchall()
     for row in rows:
         print(row)
+
 
 # Fetch data from APIs
 fetch_weather_data()
