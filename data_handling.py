@@ -5,6 +5,8 @@ import sqlite3
 import requests
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
+import sys      
+
 
 # Connect to the SQLite database (or create it if it doesn't exist)
 conn = sqlite3.connect('weather_data.db')
@@ -43,40 +45,7 @@ cursor.execute('''
         lemonade_searches INTEGER
     )
 ''')
-conn.commit()
 
-
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS weather_summary (
-        weather_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        location TEXT,
-        start_date TEXT,
-        end_date TEXT
-    )
-''')
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS daily_temperatures (
-        weather_id INTEGER,
-        date TEXT PRIMARY KEY,
-        high_temperature REAL,
-        FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
-    )
-''')
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS daily_uv_index (
-        weather_id INTEGER,
-        date TEXT PRIMARY KEY,
-        high_uv REAL,
-        FOREIGN KEY(weather_id) REFERENCES weather_summary(weather_id)
-    )
-''')
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS google_searches (
-        date TEXT PRIMARY KEY,
-        hot_chocolate_searches INTEGER,
-        lemonade_searches INTEGER
-    )
-''')
 conn.commit()
 
 # Function to check existing data
@@ -156,51 +125,74 @@ def fetch_google_trends_data(conn, cursor):
     start_date = last_date + timedelta(days=1) if last_date else datetime(2023, 1, 1)
     end_date = start_date + timedelta(days=24)
 
-    api_key = "YOUR_API_KEY"
+    api_key = "7f531efa217006f20c40e7e4adf06b55f3394e44df226c56294fce8d1e61a81a"
     api_url = "https://serpapi.com/search.json"
 
     dates, hot_chocolate_values, lemonade_values = [], [], []
 
-    current_date = start_date
-    while current_date <= end_date:
-        try:
-            # Fetch hot chocolate trends
-            params_hot_chocolate = {
-                "engine": "google_trends",
-                "q": "hot chocolate",
-                "date": current_date.strftime('%Y-%m-%d'),
-                "api_key": api_key
-            }
-            response_hot_chocolate = requests.get(api_url, params=params_hot_chocolate).json()
-            hot_chocolate_value = sum(entry.get("value", 0) for entry in response_hot_chocolate.get("timeline_data", []))
 
-            # Fetch lemonade trends
-            params_lemonade = {
-                "engine": "google_trends",
-                "q": "lemonade",
-                "date": current_date.strftime('%Y-%m-%d'),
-                "api_key": api_key
-            }
-            response_lemonade = requests.get(api_url, params=params_lemonade).json()
-            lemonade_value = sum(entry.get("value", 0) for entry in response_lemonade.get("timeline_data", []))
+    try:
+        # Fetch hot chocolate trends
+        date_range = f"{start_date.strftime('%Y-%m-%d')} {end_date.strftime('%Y-%m-%d')}"
+        params_hot_chocolate = {
+            "engine": "google_trends",
+            "q": "hot chocolate,lemonade",
+            "date": date_range,
+            "api_key": api_key
+        }
+        response_hot_chocolate = requests.get(api_url, params=params_hot_chocolate).json()
+        print(response_hot_chocolate)
+        
+        # hot_chocolate_value = sum(entry.get("value", 0) for entry in response_hot_chocolate.get("timeline_data", []))
 
-            # Append results
-            dates.append(current_date.strftime('%Y-%m-%d'))
-            hot_chocolate_values.append(hot_chocolate_value)
-            lemonade_values.append(lemonade_value)
-        except Exception as e:
-            print(f"Error fetching data for {current_date.strftime('%Y-%m-%d')}: {e}")
-            dates.append(current_date.strftime('%Y-%m-%d'))
-            hot_chocolate_values.append(0)
-            lemonade_values.append(0)
+        timeline_data = response_hot_chocolate['interest_over_time']['timeline_data']
 
-        current_date += timedelta(days=1)
+        # Initialize empty lists
+        dates = []
+        hot_chocolate_values = []
+        lemonade_values = []
+
+        # Loop through the timeline data to extract values
+        for data in timeline_data:
+            # Convert date format from "Jan 1, 2023" to "%Y-%m-%d"
+            original_date = data['date']
+            formatted_date = datetime.strptime(original_date, '%b %d, %Y').strftime('%Y-%m-%d')
+            dates.append(formatted_date)
+            
+            # Extract values for hot chocolate and lemonade
+            for value in data['values']:
+                if value['query'] == 'hot chocolate':
+                    hot_chocolate_values.append(int(value['value']))
+                elif value['query'] == 'lemonade':
+                    lemonade_values.append(int(value['value']))
+
+
+        # Append results
+        dates.append(dates)
+        hot_chocolate_values.append(hot_chocolate_values)
+        lemonade_values.append(lemonade_values)
+    except Exception as e:
+        print(f"Error fetching data for {start_date.strftime('%Y-%m-%d')}: {e}")
+        dates.append(start_date.strftime('%Y-%m-%d'))
+        hot_chocolate_values.append(0)
+        lemonade_values.append(0)
+
 
     trends_df = pd.DataFrame({
         "date": dates,
         "hot_chocolate_searches": hot_chocolate_values,
         "lemonade_searches": lemonade_values
     })
+    trends_df['hot_chocolate_searches'] = pd.to_numeric(trends_df['hot_chocolate_searches'], errors='coerce')
+    trends_df['lemonade_searches'] = pd.to_numeric(trends_df['lemonade_searches'], errors='coerce')
+
+    # Drop rows with NaN values (if any)
+    trends_df = trends_df.dropna()
+
+    # Ensure the columns are integers (if they should be integers)
+    trends_df['hot_chocolate_searches'] = trends_df['hot_chocolate_searches'].astype(int)
+    trends_df['lemonade_searches'] = trends_df['lemonade_searches'].astype(int)
+
     trends_df.to_sql('google_searches', conn, if_exists='append', index=False)
     print(f"Stored Google Trends data from {start_date} to {end_date}.")
 
@@ -226,40 +218,85 @@ if __name__ == "__main__":
 
 
     # Fetch data in batches
-    batch_count = 0
+    batch_count_google = 0
+    batch_count_temp = 0
+    batch_count_uv = 0
+
+    amount_of_days = 100
+
+    # Ensure Google Searches table has 100+ records
     while True:
-        print(f"Starting batch {batch_count + 1}...")
-        ensure_minimum_records(cursor)
+        print(f"Starting Google Searches batch {batch_count_google + 1}...")
 
-        # Fetch and store data
-        fetch_weather_data(conn, cursor)
-        fetch_uv_data(conn, cursor)
-        fetch_google_trends_data(conn, cursor)
+        fetch_google_trends_data(conn, cursor)  # Fetch Google Trends data
 
-        batch_count += 1
-        print(f"Batch {batch_count} fetched and stored.")
+        batch_count_google += 1
+        cursor.execute("SELECT COUNT(*) FROM google_searches")
+        google_search_count = cursor.fetchone()[0]
+        print(f"Google Searches Record Count: {google_search_count}")
 
-        # Check if 100+ records have been collected
-        cursor.execute("SELECT COUNT(*) FROM daily_temperatures")
-        record_count = cursor.fetchone()[0]
-        if record_count >= 100:
-            print(f"100+ records collected after {batch_count} batches. Stopping.")
+        if google_search_count >= amount_of_days:
+            print(f"Google Searches table reached 100+ records after {batch_count_google} batches.")
             break
 
-    
+    # Ensure Daily Temperatures table has 100+ records
+    while True:
+        print(f"Starting Daily Temperatures batch {batch_count_temp + 1}...")
+
+        fetch_weather_data(conn, cursor)  # Fetch Weather data
+
+        batch_count_temp += 1
+        cursor.execute("SELECT COUNT(*) FROM daily_temperatures")
+        temperature_count = cursor.fetchone()[0]
+        print(f"Daily Temperatures Record Count: {temperature_count}")
+
+        if temperature_count >= amount_of_days:
+            print(f"Daily Temperatures table reached 100+ records after {batch_count_temp} batches.")
+            break
+
+    # Ensure UV Data table has 100+ records
+    while True:
+        print(f"Starting UV Data batch {batch_count_uv + 1}...")
+
+        fetch_uv_data(conn, cursor)  # Fetch UV data
+
+        batch_count_uv += 1
+        cursor.execute("SELECT COUNT(*) FROM daily_uv_index")
+        uv_count = cursor.fetchone()[0]
+        print(f"UV Data Record Count: {uv_count}")
+
+        if uv_count >= amount_of_days:
+            print(f"UV Data table reached 100+ records after {batch_count_uv} batches.")
+            break
+
+    print("All tables now have 100+ records. Process complete.")
 
     # Data analysis and visualization
-    temp_data = pd.read_sql('SELECT * FROM daily_temperatures', conn)
-    uv_data = pd.read_sql('SELECT * FROM daily_uv_index', conn)
-    search_data = pd.read_sql('SELECT * FROM google_searches', conn)
+    query = """
+    SELECT 
+        temp.date,
+        temp.high_temperature,
+        uv.high_uv,
+        search.hot_chocolate_searches,
+        search.lemonade_searches
+    FROM 
+        daily_temperatures AS temp
+    JOIN 
+        daily_uv_index AS uv
+    ON 
+        temp.date = uv.date
+    JOIN 
+        google_searches AS search
+    ON 
+        temp.date = search.date
+    """
 
-    # Convert dates to datetime format
-    temp_data['date'] = pd.to_datetime(temp_data['date'])
-    uv_data['date'] = pd.to_datetime(uv_data['date'])
-    search_data['date'] = pd.to_datetime(search_data['date'])
+    # Execute the query
+    merged_data = pd.read_sql(query, conn)
 
-    # Merge data
-    merged_data = temp_data.merge(uv_data, on='date').merge(search_data, on='date')
+    # Convert the date column to datetime format if necessary
+    merged_data['date'] = pd.to_datetime(merged_data['date'])
+
     merged_data = merged_data.sort_values(by='date')
 
     # Calculations
@@ -281,7 +318,7 @@ if __name__ == "__main__":
     plt.grid(True)
     plt.xticks(rotation=45)
     plt.tight_layout()
-    plt.show()
+    plt.savefig("temp_uv_plot.png")
 
     # --- Graph 2: Temperature, UV Index, and Lemonade Searches ---
     fig, ax1 = plt.subplots(figsize=(12, 6))
@@ -301,7 +338,7 @@ if __name__ == "__main__":
     plt.title('Daily Trends: Temperature, UV Index, and Lemonade Searches (2023)')
     plt.grid(True)
     fig.tight_layout()
-    plt.show()
+    plt.savefig("lemonade_search_plot.png")
 
     # --- Graph 3: Temperature, UV Index, and Hot Chocolate Searches ---
     fig, ax1 = plt.subplots(figsize=(12, 6))
@@ -321,7 +358,7 @@ if __name__ == "__main__":
     plt.title('Daily Trends: Temperature, UV Index, and Hot Chocolate Searches (2023)')
     plt.grid(True)
     fig.tight_layout()
-    plt.show()
+    plt.savefig("hot_chocolate_search_plot.png")
 
     # Close the database connection
     conn.close()
